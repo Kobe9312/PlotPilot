@@ -21,7 +21,11 @@ class RelationshipGraph:
     ) -> None:
         """添加关系（保留历史记录）
 
-        关系是双向的，会同时添加到两个角色的邻接表中
+        关系是双向的，会同时添加到两个角色的邻接表中。
+
+        注意：关系存储为双向的，使用相同的 Relationship 对象。
+        这意味着关系是对称的（如果 A 是 B 的朋友，B 也是 A 的朋友）。
+        对于非对称关系（如单向的爱慕），需要使用不同的设计。
         """
         # 添加 char1 -> char2
         if char1 not in self._adjacency_list:

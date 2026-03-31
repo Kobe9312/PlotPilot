@@ -40,7 +40,7 @@ class TestRelationship:
             established_in_chapter=1,
             description="Met at school"
         )
-        with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
+        with pytest.raises((AttributeError, TypeError)):  # dataclass frozen raises one of these
             rel.relation_type = RelationType.ENEMY
 
     def test_invalid_chapter_number(self):
@@ -73,6 +73,24 @@ class TestRelationship:
                 relation_type=RelationType.FRIEND,
                 established_in_chapter=1,
                 description="   "
+            )
+
+    def test_invalid_relation_type(self):
+        """测试无效的关系类型"""
+        with pytest.raises(TypeError, match="relation_type must be a RelationType enum"):
+            Relationship(
+                relation_type="friend",  # string instead of enum
+                established_in_chapter=1,
+                description="Met at school"
+            )
+
+    def test_invalid_description_type(self):
+        """测试无效的描述类型"""
+        with pytest.raises(TypeError, match="description must be a string"):
+            Relationship(
+                relation_type=RelationType.FRIEND,
+                established_in_chapter=1,
+                description=123  # number instead of string
             )
 
 
