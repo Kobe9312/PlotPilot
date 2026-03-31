@@ -8,8 +8,8 @@ class BaseEntity:
 
     def __init__(self, id: str):
         self.id = id
-        self.created_at = datetime.now()
-        self.updated_at = datetime.now()
+        self.created_at = datetime.utcnow()
+        self.updated_at = datetime.utcnow()
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, BaseEntity):

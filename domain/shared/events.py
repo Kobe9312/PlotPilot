@@ -10,7 +10,7 @@ class DomainEvent:
     def __init__(self, aggregate_id: str):
         self.event_id = str(uuid.uuid4())
         self.aggregate_id = aggregate_id
-        self.occurred_at = datetime.now()
+        self.occurred_at = datetime.utcnow()
 
     def to_dict(self) -> Dict[str, Any]:
         return {
