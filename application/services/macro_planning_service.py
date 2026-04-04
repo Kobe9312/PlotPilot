@@ -5,12 +5,15 @@
 
 import json
 import uuid
+import logging
 from typing import Dict, List, Optional
 from datetime import datetime
 
 from domain.structure.story_node import StoryNode, NodeType, PlanningStatus, PlanningSource
 from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
 from infrastructure.ai.llm_client import LLMClient
+
+logger = logging.getLogger(__name__)
 
 
 class MacroPlanningService:
@@ -29,7 +32,7 @@ class MacroPlanningService:
         novel_id: str,
         premise: str,
         target_chapters: int,
-        structure_preference: Dict[str, int],
+        structure_preference: Optional[Dict[str, int]],
         bible_context: Optional[Dict] = None
     ) -> Dict:
         """
@@ -39,8 +42,8 @@ class MacroPlanningService:
             novel_id: 小说 ID
             premise: 小说前提
             target_chapters: 目标章节数
-            structure_preference: 结构偏好 {"parts": 3, "volumes_per_part": 3, "acts_per_volume": 3}
-            bible_context: Bible 上下文（主角、地点、冲突等）
+            structure_preference: 结构偏好（可选，None 表示 AI 自主决定）
+            bible_context: Bible 上下文（世界观、文约、角色、地点等）
 
         Returns:
             规划结果字典
@@ -53,17 +56,25 @@ class MacroPlanningService:
             bible_context
         )
 
+        logger.info(f"[MacroPlanning] Calling LLM with prompt length: {len(prompt)}")
+        logger.debug(f"[MacroPlanning] Prompt preview: {prompt[:500]}")
+
         # 调用 LLM 生成规划
         response = await self.llm_client.generate(prompt)
+
+        logger.info(f"[MacroPlanning] LLM response length: {len(response)}")
+        logger.debug(f"[MacroPlanning] Response preview: {response[:500]}")
 
         # 解析 JSON 响应
         try:
             structure = self._parse_llm_response(response)
+            logger.info(f"[MacroPlanning] Parsed {len(structure)} parts")
             return {
                 "novel_id": novel_id,
                 "structure": structure
             }
         except Exception as e:
+            logger.error(f"[MacroPlanning] Parse failed: {e}")
             raise ValueError(f"解析 LLM 响应失败: {e}")
 
     async def confirm_macro_plan(
@@ -134,34 +145,72 @@ class MacroPlanningService:
         self,
         premise: str,
         target_chapters: int,
-        structure_preference: Dict[str, int],
+        structure_preference: Optional[Dict[str, int]],
         bible_context: Optional[Dict] = None
     ) -> str:
         """构建宏观规划提示词"""
-        parts = structure_preference.get("parts", 3)
-        volumes_per_part = structure_preference.get("volumes_per_part", 3)
-        acts_per_volume = structure_preference.get("acts_per_volume", 3)
 
+        # 构建 Bible 信息
         bible_info = ""
         if bible_context:
-            bible_info = f"""
-可用的 Bible 信息：
-主要人物：{', '.join(bible_context.get('characters', []))}
-主要地点：{', '.join(bible_context.get('locations', []))}
-核心冲突：{', '.join(bible_context.get('conflicts', []))}
+            worldview = bible_context.get('worldview', '')
+            guidelines = bible_context.get('writing_guidelines', '')
+            characters = bible_context.get('characters', [])
+            locations = bible_context.get('locations', [])
+
+            if worldview:
+                bible_info += f"""
+世界观设定：
+{worldview}
 """
 
-        prompt = f"""你是一位资深的小说结构规划师。请根据以下信息为小说设计完整的宏观结构框架。
+            if guidelines:
+                bible_info += f"""
+文约（写作指南）：
+{guidelines}
+"""
+
+            if characters:
+                bible_info += """
+初始角色：
+"""
+                for char in characters[:10]:
+                    bible_info += f"- {char.get('name', '')}: {char.get('description', '')}\n"
+
+            if locations:
+                bible_info += """
+初始地图（地点）：
+"""
+                for loc in locations[:10]:
+                    bible_info += f"- {loc.get('name', '')}: {loc.get('description', '')}\n"
+
+        # 根据是否有结构偏好，生成不同的提示词
+        if structure_preference:
+            parts = structure_preference.get("parts", 3)
+            volumes_per_part = structure_preference.get("volumes_per_part", 3)
+            acts_per_volume = structure_preference.get("acts_per_volume", 3)
+            structure_instruction = f"""
+结构偏好：
+- {parts} 部
+- 每部 {volumes_per_part} 卷
+- 每卷 {acts_per_volume} 幕
+"""
+        else:
+            structure_instruction = """
+结构要求：
+- 请根据故事内容自主决定部/卷/幕的数量
+- 确保结构合理，符合故事发展节奏
+- 建议：一般小说可以分为 2-5 部，每部 2-4 卷，每卷 2-4 幕
+"""
+
+        prompt = f"""你是一位资深的小说结构规划师。请根据以下信息为小说设计完整的宏观结构框架（部-卷-幕）。
 
 小说前提：
 {premise}
 
 目标章节数：{target_chapters}
 
-结构偏好：
-- {parts} 部
-- 每部 {volumes_per_part} 卷
-- 每卷 {acts_per_volume} 幕
+{structure_instruction}
 
 {bible_info}
 
