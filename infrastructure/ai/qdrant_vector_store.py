@@ -8,15 +8,16 @@ from domain.ai.services.vector_store import VectorStore
 class QdrantVectorStore(VectorStore):
     """Qdrant 向量存储实现"""
 
-    def __init__(self, host: str = "localhost", port: int = 6333):
+    def __init__(self, host: str = "localhost", port: int = 6333, api_key: str = None):
         """
         初始化 Qdrant 客户端
 
         Args:
             host: Qdrant 服务器地址
             port: Qdrant 服务器端口
+            api_key: Qdrant API 密钥（可选）
         """
-        self.client = QdrantClient(host=host, port=port)
+        self.client = QdrantClient(host=host, port=port, api_key=api_key)
 
     async def insert(
         self,

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from application.services.scene_director_service import SceneDirectorService
+    from infrastructure.ai.qdrant_vector_store import QdrantVectorStore
 
 from application.paths import DATA_DIR
 from infrastructure.persistence.storage.file_storage import FileStorage
@@ -244,15 +245,36 @@ def get_consistency_checker() -> ConsistencyChecker:
     return ConsistencyChecker()
 
 
-def get_vector_store() -> VectorStore:
-    """获取向量存储（简化实现）
+def get_vector_store() -> Optional["QdrantVectorStore"]:
+    """获取向量存储
+
+    根据环境变量返回 QdrantVectorStore 实例或 None。
+
+    环境变量配置：
+    - QDRANT_ENABLED: 是否启用 Qdrant（"true" 启用，其他值禁用）
+    - QDRANT_HOST: Qdrant 服务器地址（默认 "localhost"）
+    - QDRANT_PORT: Qdrant 服务器端口（默认 6333）
+    - QDRANT_API_KEY: Qdrant API 密钥（可选）
+
+    本地启动 Qdrant：
+        docker run -p 6333:6333 qdrant/qdrant
 
     Returns:
-        VectorStore 实例（Mock）
+        QdrantVectorStore 实例或 None
     """
-    # 简化实现：返回 None，实际应该返回真实的向量存储
-    # 在测试和开发中可以使用 Mock
-    return None
+    # 检查是否启用
+    enabled = os.getenv("QDRANT_ENABLED", "").lower() == "true"
+    if not enabled:
+        return None
+
+    # 读取配置
+    host = os.getenv("QDRANT_HOST", "localhost")
+    port = int(os.getenv("QDRANT_PORT", "6333"))
+    api_key = os.getenv("QDRANT_API_KEY")
+
+    # 导入并创建实例
+    from infrastructure.ai.qdrant_vector_store import QdrantVectorStore
+    return QdrantVectorStore(host=host, port=port, api_key=api_key)
 
 
 def get_relationship_engine() -> RelationshipEngine:
