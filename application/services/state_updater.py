@@ -10,9 +10,16 @@ from domain.novel.value_objects.foreshadowing import (
     ForeshadowingStatus,
     ImportanceLevel
 )
+from domain.novel.value_objects.timeline_event import TimelineEvent
+from domain.novel.entities.storyline import Storyline
+from domain.novel.value_objects.storyline_type import StorylineType
+from domain.novel.value_objects.storyline_status import StorylineStatus
 from domain.bible.repositories.bible_repository import BibleRepository
 from domain.novel.repositories.foreshadowing_repository import ForeshadowingRepository
+from domain.novel.repositories.timeline_repository import TimelineRepository
+from domain.novel.repositories.storyline_repository import StorylineRepository
 from domain.novel.entities.foreshadowing_registry import ForeshadowingRegistry
+from domain.novel.entities.timeline_registry import TimelineRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +34,14 @@ class StateUpdater:
         self,
         bible_repository: BibleRepository,
         foreshadowing_repository: ForeshadowingRepository,
+        timeline_repository: Optional[TimelineRepository] = None,
+        storyline_repository: Optional[StorylineRepository] = None,
         knowledge_service=None
     ):
         self.bible_repository = bible_repository
         self.foreshadowing_repository = foreshadowing_repository
+        self.timeline_repository = timeline_repository
+        self.storyline_repository = storyline_repository
         self.knowledge_service = knowledge_service
 
     def update_from_chapter(
@@ -120,6 +131,100 @@ class StateUpdater:
             logger.info(f"ForeshadowingRegistry updated for novel {novel_id}")
         else:
             logger.debug("No foreshadowing activity to update")
+
+        # 更新 TimelineRegistry（时间线事件 - 第一梯队）
+        if self.timeline_repository and chapter_state.has_timeline_events():
+            logger.debug(f"Updating TimelineRegistry: {len(chapter_state.timeline_events)} events")
+            timeline_registry = self.timeline_repository.get_by_novel_id(novel_id_obj)
+            if timeline_registry is None:
+                logger.info(f"TimelineRegistry not found for novel {novel_id}, creating new one")
+                timeline_registry = TimelineRegistry(
+                    id=str(uuid.uuid4()),
+                    novel_id=novel_id_obj
+                )
+
+            # 添加时间线事件
+            for event_data in chapter_state.timeline_events:
+                timeline_event = TimelineEvent(
+                    id=str(uuid.uuid4()),
+                    chapter_number=chapter_number,
+                    event=event_data.get("event", ""),
+                    timestamp=event_data.get("timestamp", ""),
+                    timestamp_type=event_data.get("timestamp_type", "vague")
+                )
+                timeline_registry.add_event(timeline_event)
+                logger.debug(f"Added timeline event: {event_data.get('event', '')[:50]}")
+
+            self.timeline_repository.save(timeline_registry)
+            logger.info(f"TimelineRegistry updated for novel {novel_id}")
+        else:
+            logger.debug("No timeline events to update")
+
+        # 更新 Storyline（故事线进度 - 第二梯队）
+        if self.storyline_repository and chapter_state.has_storyline_activity():
+            logger.debug(
+                f"Updating Storylines: "
+                f"advanced={len(chapter_state.advanced_storylines)}, "
+                f"new={len(chapter_state.new_storylines)}"
+            )
+
+            # 推进已有故事线
+            for advanced_data in chapter_state.advanced_storylines:
+                storyline_id = advanced_data.get("storyline_id")
+                storyline_name = advanced_data.get("storyline_name")
+                progress_summary = advanced_data.get("progress_summary", "")
+
+                if storyline_id:
+                    # 通过 ID 查找
+                    storyline = self.storyline_repository.get_by_id(storyline_id)
+                    if storyline:
+                        storyline.update_progress(chapter_number, progress_summary)
+                        self.storyline_repository.save(storyline)
+                        logger.debug(f"Updated storyline {storyline_id}: {progress_summary[:50]}")
+                    else:
+                        logger.warning(f"Storyline {storyline_id} not found")
+                elif storyline_name:
+                    # 通过名称查找（需要遍历）
+                    storylines = self.storyline_repository.get_by_novel_id(novel_id_obj)
+                    found = False
+                    for sl in storylines:
+                        if sl.name == storyline_name:
+                            sl.update_progress(chapter_number, progress_summary)
+                            self.storyline_repository.save(sl)
+                            logger.debug(f"Updated storyline '{storyline_name}': {progress_summary[:50]}")
+                            found = True
+                            break
+                    if not found:
+                        logger.warning(f"Storyline '{storyline_name}' not found")
+
+            # 创建新故事线
+            for new_data in chapter_state.new_storylines:
+                storyline_type_str = new_data.get("type", "sub")
+                # 根据类型字符串映射到枚举值
+                if storyline_type_str == "main":
+                    storyline_type = StorylineType.MAIN_PLOT
+                else:
+                    # 默认使用 GROWTH 作为支线类型
+                    storyline_type = StorylineType.GROWTH
+
+                new_storyline = Storyline(
+                    id=str(uuid.uuid4()),
+                    novel_id=novel_id_obj,
+                    storyline_type=storyline_type,
+                    status=StorylineStatus.ACTIVE,
+                    estimated_chapter_start=chapter_number,
+                    estimated_chapter_end=chapter_number + 50,  # 默认估计50章
+                    name=new_data.get("name", ""),
+                    description=new_data.get("description", ""),
+                    last_active_chapter=chapter_number,
+                    progress_summary=f"在第{chapter_number}章引入"
+                )
+                self.storyline_repository.save(new_storyline)
+                logger.debug(f"Created new storyline: {new_data.get('name', '')}")
+
+            logger.info(f"Storylines updated for novel {novel_id}")
+        else:
+            logger.debug("No storyline activity to update")
 
         # 更新 Knowledge（章节摘要）
         if self.knowledge_service:

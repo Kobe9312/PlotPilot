@@ -18,7 +18,11 @@ class Storyline(BaseEntity):
         estimated_chapter_start: int,
         estimated_chapter_end: int,
         milestones: Optional[List[StorylineMilestone]] = None,
-        current_milestone_index: int = 0
+        current_milestone_index: int = 0,
+        name: str = "",
+        description: str = "",
+        last_active_chapter: int = 0,
+        progress_summary: str = ""
     ):
         super().__init__(id)
         self.novel_id = novel_id
@@ -28,6 +32,20 @@ class Storyline(BaseEntity):
         self.estimated_chapter_end = estimated_chapter_end
         self.milestones: List[StorylineMilestone] = milestones if milestones is not None else []
         self.current_milestone_index = current_milestone_index
+        self.name = name
+        self.description = description
+        self.last_active_chapter = last_active_chapter
+        self.progress_summary = progress_summary
+
+    def update_progress(self, chapter_number: int, summary: str) -> None:
+        """更新故事线进度
+
+        Args:
+            chapter_number: 章节号
+            summary: 进度摘要
+        """
+        self.last_active_chapter = chapter_number
+        self.progress_summary = summary
 
     def add_milestone(self, milestone: StorylineMilestone) -> None:
         """添加里程碑"""

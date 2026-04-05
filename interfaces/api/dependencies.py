@@ -24,9 +24,9 @@ from infrastructure.persistence.database.sqlite_plot_arc_repository import Sqlit
 from infrastructure.persistence.database.sqlite_voice_vault_repository import SqliteVoiceVaultRepository
 from infrastructure.persistence.database.sqlite_voice_fingerprint_repository import SQLiteVoiceFingerprintRepository
 from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
-from infrastructure.persistence.repositories.file_cast_repository import FileCastRepository
-from infrastructure.persistence.repositories.file_knowledge_repository import FileKnowledgeRepository
+from infrastructure.persistence.database.sqlite_cast_repository import SqliteCastRepository
 from infrastructure.persistence.database.sqlite_foreshadowing_repository import SqliteForeshadowingRepository
+from infrastructure.persistence.database.sqlite_timeline_repository import SqliteTimelineRepository
 from infrastructure.ai.providers.anthropic_provider import AnthropicProvider
 from infrastructure.ai.config.settings import Settings
 
@@ -123,13 +123,13 @@ def get_bible_repository() -> SqliteBibleRepository:
     return SqliteBibleRepository(get_database())
 
 
-def get_cast_repository() -> FileCastRepository:
-    """获取 Cast 仓储
+def get_cast_repository() -> SqliteCastRepository:
+    """获取 Cast 仓储（SQLite JSON Blob）
 
     Returns:
-        FileCastRepository 实例
+        SqliteCastRepository 实例
     """
-    return FileCastRepository(get_storage())
+    return SqliteCastRepository(get_database())
 
 
 def get_knowledge_repository() -> SqliteKnowledgeRepository:
@@ -154,6 +154,11 @@ def get_plot_arc_repository() -> SqlitePlotArcRepository:
 def get_foreshadowing_repository() -> SqliteForeshadowingRepository:
     """伏笔与潜台词账本仓储（SQLite，与 novels 同库；不再使用 foreshadowings/*.json）。"""
     return SqliteForeshadowingRepository(get_database())
+
+
+def get_timeline_repository() -> SqliteTimelineRepository:
+    """获取时间线仓储"""
+    return SqliteTimelineRepository(get_database())
 
 
 def get_story_node_repository() -> StoryNodeRepository:
@@ -476,6 +481,8 @@ def get_state_updater() -> StateUpdater:
     return StateUpdater(
         bible_repository=get_bible_repository(),
         foreshadowing_repository=get_foreshadowing_repository(),
+        timeline_repository=get_timeline_repository(),
+        storyline_repository=get_storyline_repository(),
         knowledge_service=get_knowledge_service()
     )
 

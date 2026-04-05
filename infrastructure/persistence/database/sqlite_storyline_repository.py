@@ -45,14 +45,29 @@ class SqliteStorylineRepository(StorylineRepository):
         now = self._now()
         conn = self._conn()
         try:
+            # Check if we need to add new columns
+            cursor = conn.execute("PRAGMA table_info(storylines)")
+            columns = {row[1] for row in cursor.fetchall()}
+
+            if 'name' not in columns:
+                conn.execute("ALTER TABLE storylines ADD COLUMN name TEXT DEFAULT ''")
+            if 'description' not in columns:
+                conn.execute("ALTER TABLE storylines ADD COLUMN description TEXT DEFAULT ''")
+            if 'last_active_chapter' not in columns:
+                conn.execute("ALTER TABLE storylines ADD COLUMN last_active_chapter INTEGER DEFAULT 0")
+            if 'progress_summary' not in columns:
+                conn.execute("ALTER TABLE storylines ADD COLUMN progress_summary TEXT DEFAULT ''")
+
             conn.execute(
                 """
                 INSERT INTO storylines (
                     id, novel_id, storyline_type, status,
                     estimated_chapter_start, estimated_chapter_end,
-                    current_milestone_index, extensions, created_at, updated_at
+                    current_milestone_index, name, description,
+                    last_active_chapter, progress_summary,
+                    extensions, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     novel_id = excluded.novel_id,
                     storyline_type = excluded.storyline_type,
@@ -60,6 +75,10 @@ class SqliteStorylineRepository(StorylineRepository):
                     estimated_chapter_start = excluded.estimated_chapter_start,
                     estimated_chapter_end = excluded.estimated_chapter_end,
                     current_milestone_index = excluded.current_milestone_index,
+                    name = excluded.name,
+                    description = excluded.description,
+                    last_active_chapter = excluded.last_active_chapter,
+                    progress_summary = excluded.progress_summary,
                     updated_at = excluded.updated_at
                 """,
                 (
@@ -70,6 +89,10 @@ class SqliteStorylineRepository(StorylineRepository):
                     storyline.estimated_chapter_start,
                     storyline.estimated_chapter_end,
                     storyline.current_milestone_index,
+                    storyline.name,
+                    storyline.description,
+                    storyline.last_active_chapter,
+                    storyline.progress_summary,
                     now,
                     now,
                 ),
@@ -157,6 +180,10 @@ class SqliteStorylineRepository(StorylineRepository):
             estimated_chapter_end=row["estimated_chapter_end"],
             milestones=milestones,
             current_milestone_index=row["current_milestone_index"],
+            name=row.get("name", ""),
+            description=row.get("description", ""),
+            last_active_chapter=row.get("last_active_chapter", 0),
+            progress_summary=row.get("progress_summary", ""),
         )
 
     def delete(self, storyline_id: str) -> None:

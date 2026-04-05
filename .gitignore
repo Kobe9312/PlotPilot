@@ -67,3 +67,5 @@ Desktop.ini
 
 # Local vector DB / dev dumps (if checked in by mistake)
 qdrant_storage/
+.models/
+data/
