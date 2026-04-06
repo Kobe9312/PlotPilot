@@ -1,7 +1,8 @@
 """Chapter API 路由"""
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path
 from typing import List, Literal
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path
 from pydantic import BaseModel, Field
 
 from application.core.services.chapter_service import ChapterService
@@ -10,85 +11,34 @@ from application.core.dtos.chapter_dto import ChapterDTO
 from application.core.dtos.novel_dto import NovelDTO
 from application.audit.dtos.chapter_review_dto import ChapterReviewDTO
 from application.core.dtos.chapter_structure_dto import ChapterStructureDTO
+from application.engine.services.chapter_aftermath_pipeline import ChapterAftermathPipeline
 from interfaces.api.dependencies import (
-    get_chapter_service, get_novel_service,
-    get_chapter_indexing_service, get_voice_drift_service,
+    get_chapter_service,
+    get_novel_service,
+    get_chapter_aftermath_pipeline,
 )
 from domain.shared.exceptions import EntityNotFoundError
+from domain.novel.value_objects.chapter_id import ChapterId
+from domain.novel.value_objects.novel_id import NovelId
 
 logger = logging.getLogger(__name__)
 
 
-async def _try_index_chapter(novel_id: str, chapter_number: int, content: str, indexing_svc) -> None:
-    """后台异步索引章节内容，失败仅记日志不影响主流程。"""
-    if indexing_svc is None:
-        return
-    summary = content[:800].strip()
-    if not summary:
-        return
-    try:
-        await indexing_svc.ensure_collection(novel_id)
-        await indexing_svc.index_chapter_summary(novel_id, chapter_number, summary)
-        logger.debug("章节索引完成 novel=%s ch=%d", novel_id, chapter_number)
-    except Exception as e:
-        logger.warning("章节索引失败 novel=%s ch=%d: %s", novel_id, chapter_number, e)
-
-
-def _try_score_drift(novel_id: str, chapter_number: int, content: str, drift_svc) -> None:
-    """后台同步计算章节文风相似度，写入 chapter_style_scores，失败仅记日志。"""
-    if drift_svc is None or not content.strip():
-        return
-    try:
-        result = drift_svc.score_chapter(
-            novel_id=novel_id,
-            chapter_number=chapter_number,
-            content=content,
-        )
-        score = result.get("similarity_score")
-        alert = result.get("drift_alert", False)
-        if alert:
-            logger.warning(
-                "文风漂移告警 novel=%s 最近连续章节相似度偏低", novel_id
-            )
-        else:
-            logger.debug(
-                "文风评分完成 novel=%s ch=%d score=%s", novel_id, chapter_number, score
-            )
-    except Exception as e:
-        logger.warning("文风评分失败 novel=%s ch=%d: %s", novel_id, chapter_number, e)
-
-
-async def _try_infer_kg_chapter(novel_id: str, chapter_number: int) -> None:
-    """后台异步对章节做知识图谱增量推断，失败仅记日志。
-
-    通过 story_node 表找到对应章节节点 UUID，再调用 KnowledgeGraphService。
-    如果找不到节点（结构树未规划），静默跳过。
-    """
-    try:
-        from application.paths import get_db_path
-        from infrastructure.persistence.database.connection import get_database
-        from infrastructure.persistence.database.sqlite_knowledge_repository import SqliteKnowledgeRepository
-        from infrastructure.persistence.database.triple_repository import TripleRepository
-        from infrastructure.persistence.database.chapter_element_repository import ChapterElementRepository
-        from infrastructure.persistence.database.story_node_repository import StoryNodeRepository
-        from application.world.services.knowledge_graph_service import KnowledgeGraphService
-
-        db_path = get_db_path()
-        kr = SqliteKnowledgeRepository(get_database())
-        story_node_id = kr.find_story_node_id_for_chapter_number(novel_id, chapter_number)
-        if not story_node_id:
-            logger.debug("KG 推断跳过：章节 %d 无故事节点 novel=%s", chapter_number, novel_id)
-            return
-
-        kg_service = KnowledgeGraphService(
-            TripleRepository(),
-            ChapterElementRepository(db_path),
-            StoryNodeRepository(db_path),
-        )
-        triples = await kg_service.infer_from_chapter(story_node_id)
-        logger.debug("KG 推断完成 novel=%s ch=%d 新三元组=%d", novel_id, chapter_number, len(triples))
-    except Exception as e:
-        logger.warning("KG 推断失败 novel=%s ch=%d: %s", novel_id, chapter_number, e)
+async def _run_chapter_aftermath(
+    novel_id: str,
+    chapter_number: int,
+    content: str,
+    chapter_uuid: str,
+    pipeline: ChapterAftermathPipeline,
+) -> None:
+    """与托管/守护进程同源的章后管线（叙事/向量、文风、KG、后台抽取）。"""
+    await pipeline.run_after_chapter_saved(
+        novel_id,
+        chapter_number,
+        content,
+        novel_id_vo=NovelId(novel_id),
+        chapter_id_vo=ChapterId(chapter_uuid),
+    )
 
 
 router = APIRouter(tags=["chapters"])
@@ -231,14 +181,9 @@ async def update_chapter(
     background_tasks: BackgroundTasks,
     chapter_number: int = Path(..., gt=0, description="章节编号"),
     service: ChapterService = Depends(get_chapter_service),
-    indexing_svc=Depends(get_chapter_indexing_service),
-    drift_svc=Depends(get_voice_drift_service),
+    pipeline: ChapterAftermathPipeline = Depends(get_chapter_aftermath_pipeline),
 ):
-    """更新章节内容，保存成功后后台触发：
-    1. 向量索引（QDRANT_ENABLED=true 时）
-    2. 文风漂移评分（与作者指纹对比，写入 chapter_style_scores）
-    3. 知识图谱增量推断（章节元素关联 → 新三元组）
-    """
+    """更新章节内容，保存成功后后台执行统一章后管线（见 ChapterAftermathPipeline）。"""
     try:
         chapter = service.update_chapter_by_novel_and_number(
             novel_id,
@@ -249,9 +194,14 @@ async def update_chapter(
         raise HTTPException(status_code=404, detail=str(e))
 
     content = request.content
-    background_tasks.add_task(_try_index_chapter, novel_id, chapter_number, content, indexing_svc)
-    background_tasks.add_task(_try_score_drift, novel_id, chapter_number, content, drift_svc)
-    background_tasks.add_task(_try_infer_kg_chapter, novel_id, chapter_number)
+    background_tasks.add_task(
+        _run_chapter_aftermath,
+        novel_id,
+        chapter_number,
+        content,
+        chapter.id,
+        pipeline,
+    )
     return chapter
 
 
