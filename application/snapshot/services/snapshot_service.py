@@ -128,24 +128,50 @@ class SnapshotService:
         snapshot["foreshadow_state"] = json.loads(snapshot["foreshadow_state"])
         return snapshot
 
-    def rollback_to_snapshot(self, novel_id: str, snapshot_id: str):
-        """回滚到快照（警告：会删除快照之后的章节）"""
+    def rollback_to_snapshot(self, novel_id: str, snapshot_id: str) -> Dict[str, Any]:
+        """回滚到快照：删除当前作品中不在快照 chapter_pointers 内的章节行。
+
+        Returns:
+            { "deleted_chapter_ids": [...], "deleted_count": int }
+        """
         snapshot = self.get_snapshot(snapshot_id)
         if not snapshot:
             raise ValueError(f"快照不存在：{snapshot_id}")
 
-        # 获取快照中的章节指针
-        valid_chapter_ids = set(snapshot["chapter_pointers"])
+        if snapshot.get("novel_id") != novel_id:
+            raise ValueError("快照不属于该作品")
 
-        # 删除不在快照中的章节（简化版：标记为 deleted）
         from domain.novel.value_objects.novel_id import NovelId
-        all_chapters = self.chapter_repository.list_by_novel(NovelId(novel_id))
-        for chapter in all_chapters:
-            if chapter.id not in valid_chapter_ids:
-                logger.warning(f"[Snapshot] 回滚删除章节：{chapter.number}")
-                # 这里应该调用 delete 方法，简化版跳过
+        from domain.novel.value_objects.chapter_id import ChapterId
 
-        logger.info(f"[Snapshot] 回滚到快照：{snapshot['name']}")
+        raw_ptrs = snapshot.get("chapter_pointers") or []
+        valid_chapter_ids = {str(x) for x in raw_ptrs}
+
+        all_chapters = self.chapter_repository.list_by_novel(NovelId(novel_id))
+
+        if not valid_chapter_ids and all_chapters:
+            raise ValueError(
+                "该快照未记录任何章节指针，为避免误删全书正文已中止回滚"
+            )
+
+        deleted_ids: List[str] = []
+        for chapter in all_chapters:
+            cid = str(chapter.id)
+            if cid not in valid_chapter_ids:
+                logger.warning(
+                    "[Snapshot] 回滚删除章节 id=%s number=%s",
+                    cid,
+                    getattr(chapter, "number", "?"),
+                )
+                self.chapter_repository.delete(ChapterId(cid))
+                deleted_ids.append(cid)
+
+        logger.info(
+            "[Snapshot] 回滚完成：%s，删除 %s 章",
+            snapshot.get("name"),
+            len(deleted_ids),
+        )
+        return {"deleted_chapter_ids": deleted_ids, "deleted_count": len(deleted_ids)}
 
     def branch_from_snapshot(
         self,

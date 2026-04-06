@@ -34,7 +34,17 @@ export interface ChroniclesResponse {
   note: string
 }
 
+export interface SnapshotRollbackResponse {
+  deleted_chapter_ids: string[]
+  deleted_count: number
+}
+
 export const chroniclesApi = {
   get: (novelId: string) =>
     apiClient.get<ChroniclesResponse>(`/novels/${novelId}/chronicles`) as Promise<ChroniclesResponse>,
+
+  rollbackToSnapshot: (novelId: string, snapshotId: string) =>
+    apiClient.post<SnapshotRollbackResponse>(
+      `/novels/${novelId}/snapshots/${snapshotId}/rollback`,
+    ) as Promise<SnapshotRollbackResponse>,
 }

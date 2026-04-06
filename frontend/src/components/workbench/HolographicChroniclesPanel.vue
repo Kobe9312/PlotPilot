@@ -5,7 +5,7 @@
         <h3 class="hc-title">全息编年史</h3>
         <p class="hc-lead">
           中轴为章进度锚点：<strong>左</strong>里世界剧情时间，<strong>右</strong>表世界快照（存档）。
-          悬浮快照节点可联想左侧剧情节点；回滚接口就绪后右侧按钮将可点。
+          悬浮右侧快照节点时高亮本行左侧剧情；回滚将删除快照未包含的章节（不可撤销）。
         </p>
       </div>
       <n-button size="small" type="primary" :loading="loading" @click="load">刷新</n-button>
@@ -34,8 +34,6 @@
           :key="row.chapter_index"
           class="helix-row"
           :class="{ 'helix-row--hot': hoverChapter === row.chapter_index }"
-          @mouseenter="hoverChapter = row.chapter_index"
-          @mouseleave="hoverChapter = null"
         >
           <div class="helix-chapter">
             <span class="helix-dot" />
@@ -61,12 +59,20 @@
               :key="sn.id"
               class="snap-node"
               :title="snapTooltip(sn)"
+              @mouseenter="hoverChapter = row.chapter_index"
+              @mouseleave="onSnapNodeLeave"
             >
               <n-tag :type="sn.kind === 'MANUAL' ? 'warning' : 'info'" size="tiny" round>
                 {{ sn.kind === 'MANUAL' ? '🟣 Manual' : '🔵 Auto' }}
               </n-tag>
               <span class="snap-name">{{ sn.name }}</span>
-              <n-button size="tiny" quaternary disabled title="rollback API 接入后启用">
+              <n-button
+                size="tiny"
+                quaternary
+                :loading="rollbackId === sn.id"
+                title="删除快照未收录的章节，恢复至该存档时的章节集合"
+                @click.stop="confirmRollback(sn)"
+              >
                 回滚
               </n-button>
             </div>
@@ -92,23 +98,60 @@
 import { ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useWorkbenchRefreshStore } from '../../stores/workbenchRefreshStore'
-import { useMessage } from 'naive-ui'
+import { useDialog, useMessage } from 'naive-ui'
 import { chroniclesApi } from '../../api/chronicles'
 import type { ChronicleRow, ChronicleSnapshot } from '../../api/chronicles'
 import TimelinePanel from './TimelinePanel.vue'
 
 const props = defineProps<{ slug: string }>()
 const message = useMessage()
+const dialog = useDialog()
 
 const loading = ref(false)
 const rows = ref<ChronicleRow[]>([])
 const maxChapter = ref(1)
 const noteText = ref('')
 const hoverChapter = ref<number | null>(null)
+const rollbackId = ref<string | null>(null)
+
+const refreshStore = useWorkbenchRefreshStore()
+const { chroniclesTick } = storeToRefs(refreshStore)
 
 function snapTooltip(sn: ChronicleSnapshot): string {
   const parts = [sn.name, sn.description, sn.created_at].filter(Boolean)
   return parts.join(' · ')
+}
+
+/** 从快照节点移入同章左侧剧情时不熄灭高亮 */
+function onSnapNodeLeave(ev: MouseEvent) {
+  const rowEl = (ev.currentTarget as HTMLElement | null)?.closest('.helix-row')
+  const to = ev.relatedTarget as Node | null
+  if (rowEl && to && rowEl.contains(to)) return
+  hoverChapter.value = null
+}
+
+function confirmRollback(sn: ChronicleSnapshot) {
+  dialog.warning({
+    title: '确认回滚到此快照？',
+    content:
+      `将删除当前作品中未包含在该快照「章节指针」内的章节正文（${sn.name || sn.id}）。此操作不可撤销。`,
+    positiveText: '回滚',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      rollbackId.value = sn.id
+      try {
+        const res = await chroniclesApi.rollbackToSnapshot(props.slug, sn.id)
+        message.success(`已回滚，移除 ${res.deleted_count} 个章节`)
+        refreshStore.bumpAfterChapterDeskChange()
+        await load()
+      } catch {
+        message.error('回滚失败，请查看后端日志')
+        return false
+      } finally {
+        rollbackId.value = null
+      }
+    },
+  })
 }
 
 async function load() {
@@ -129,8 +172,6 @@ async function load() {
 
 watch(() => props.slug, () => void load(), { immediate: true })
 
-const refreshStore = useWorkbenchRefreshStore()
-const { chroniclesTick } = storeToRefs(refreshStore)
 watch(chroniclesTick, () => {
   void load()
 })
