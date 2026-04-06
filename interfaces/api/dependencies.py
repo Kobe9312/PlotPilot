@@ -212,9 +212,41 @@ def get_chapter_service() -> ChapterService:
     return ChapterService(get_chapter_repository(), get_novel_repository())
 
 
+@lru_cache
+def get_background_task_service():
+    """单例后台任务队列（API 进程内）：图谱 LLM 抽取、伏笔抽取；与守护进程各自独立。"""
+    from application.engine.services.background_task_service import BackgroundTaskService
+    from infrastructure.persistence.database.triple_repository import TripleRepository
+
+    return BackgroundTaskService(
+        voice_drift_service=get_voice_drift_service(),
+        llm_service=get_llm_service(),
+        foreshadowing_repo=get_foreshadowing_repository(),
+        triple_repository=TripleRepository(),
+    )
+
+
+def get_chapter_aftermath_pipeline():
+    """章节保存后统一管线：叙事/向量、文风、KG 推断、后台抽取（不含重复文风队列）。"""
+    from application.engine.services.chapter_aftermath_pipeline import ChapterAftermathPipeline
+
+    return ChapterAftermathPipeline(
+        knowledge_service=get_knowledge_service(),
+        chapter_indexing_service=get_chapter_indexing_service(),
+        llm_service=get_llm_service(),
+        voice_drift_service=get_voice_drift_service(),
+        background_task_service=get_background_task_service(),
+    )
+
+
 def get_hosted_write_service() -> HostedWriteService:
     """托管连写：自动大纲 + 多章流式生成 + 可选落库。"""
-    return HostedWriteService(get_auto_workflow(), get_chapter_service(), get_novel_service())
+    return HostedWriteService(
+        get_auto_workflow(),
+        get_chapter_service(),
+        get_novel_service(),
+        chapter_aftermath_pipeline=get_chapter_aftermath_pipeline(),
+    )
 
 
 def get_llm_service():
