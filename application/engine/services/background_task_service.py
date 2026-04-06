@@ -23,9 +23,10 @@ logger = logging.getLogger(__name__)
 
 class TaskType(Enum):
     """后台任务类型"""
-    GRAPH_UPDATE = "graph_update"
+
     VOICE_ANALYSIS = "voice_analysis"
-    FORESHADOW_EXTRACT = "foreshadow_extract"
+    # 一次 LLM：章末叙事 + 三元组 + 伏笔 + 向量（与 ChapterAftermathPipeline 第一步同源）
+    EXTRACT_BUNDLE = "extract_bundle"
 
 
 class BackgroundTask:
@@ -54,11 +55,15 @@ class BackgroundTaskService:
         llm_service=None,
         foreshadowing_repo=None,
         triple_repository=None,
+        knowledge_service=None,
+        chapter_indexing_service=None,
     ):
         self.voice_drift_service = voice_drift_service
         self.llm_service = llm_service
         self.foreshadowing_repo = foreshadowing_repo
         self.triple_repository = triple_repository
+        self.knowledge_service = knowledge_service
+        self.chapter_indexing_service = chapter_indexing_service
 
         self._queue = queue.Queue(maxsize=200)  # 防队列无限增长
         self._worker = threading.Thread(target=self._worker_loop, daemon=True, name="bg-task-worker")
@@ -110,10 +115,8 @@ class BackgroundTaskService:
         """分发任务到具体处理器"""
         if task.task_type == TaskType.VOICE_ANALYSIS:
             self._handle_voice_analysis(task)
-        elif task.task_type == TaskType.GRAPH_UPDATE:
-            self._handle_graph_update(task)
-        elif task.task_type == TaskType.FORESHADOW_EXTRACT:
-            self._handle_foreshadow_extract(task)
+        elif task.task_type == TaskType.EXTRACT_BUNDLE:
+            self._handle_extract_bundle(task)
 
     def _handle_voice_analysis(self, task):
         """文风分析处理器"""
@@ -131,108 +134,47 @@ class BackgroundTaskService:
         )
         logger.info(f"[BG] 文风分析完成：第 {chapter_number} 章")
 
-    def _handle_graph_update(self, task):
-        """图谱更新处理器（LLM 提取三元组）"""
-        if not self.llm_service or not self.triple_repository:
+    def _handle_extract_bundle(self, task):
+        """章末 bundle：一次 LLM → 叙事落库 + 三元组 + 伏笔 + 向量（与管线 narrative_sync 一致）。"""
+        if not self.llm_service or not self.knowledge_service:
             return
-        content = task.payload.get("content", "")[:2000]
-        chapter_number = task.payload.get("chapter_number", 0)
+        content = (task.payload.get("content") or "").strip()
+        chapter_number = int(task.payload.get("chapter_number") or 0)
         if not content:
             return
 
-        from domain.ai.value_objects.prompt import Prompt
-        from domain.ai.services.llm_service import GenerationConfig
-
-        prompt = Prompt(
-            system="你是信息抽取专家，只输出指定格式内容，不要解释。",
-            user=f"""从以下小说章节提取人物关系三元组。
-格式：主体|关系|客体（每行一条，最多8条）
-只提取文中明确描述的动作或关系。
-
-章节内容：
-{content}
-
-三元组："""
-        )
-        config = GenerationConfig(max_tokens=400, temperature=0.2)
-        result = asyncio.run(self.llm_service.generate(prompt, config))
-        raw = result.content if hasattr(result, "content") else str(result)
-
-        for line in raw.strip().split("\n"):
-            parts = [p.strip() for p in line.split("|")]
-            if len(parts) == 3 and all(parts):
-                subject, predicate, obj = parts
-                try:
-                    self.triple_repository.save({
-                        "id": str(uuid.uuid4()),
-                        "novel_id": task.novel_id.value,
-                        "subject": subject,
-                        "predicate": predicate,
-                        "object": obj,
-                        "chapter_number": chapter_number,
-                        "source_type": "autopilot_extract",
-                        "confidence": 0.7,
-                    })
-                except Exception:
-                    pass  # 重复三元组忽略
-        logger.info(f"[BG] 图谱更新完成：第 {chapter_number} 章")
-
-    def _handle_foreshadow_extract(self, task):
-        """伏笔提取处理器"""
-        if not self.llm_service or not self.foreshadowing_repo:
-            return
-        content = task.payload.get("content", "")[:2000]
-        chapter_number = task.payload.get("chapter_number", 0)
-        if not content:
-            return
-
-        from domain.ai.value_objects.prompt import Prompt
-        from domain.ai.services.llm_service import GenerationConfig
-
-        prompt = Prompt(
-            system="你是小说分析专家，专门识别叙事伏笔。只输出格式内容，不要解释。",
-            user=f"""从以下章节提取潜在伏笔（悬而未决的情节/暗示/物品/对话）。
-格式：伏笔内容|触发关键词（每行一条，最多4条）
-
-章节：
-{content}
-
-伏笔："""
-        )
-        config = GenerationConfig(max_tokens=300, temperature=0.3)
-        result = asyncio.run(self.llm_service.generate(prompt, config))
-        raw = result.content if hasattr(result, "content") else str(result)
-
-        # 使用 ForeshadowingRegistry 的领域 API
-        from domain.novel.value_objects.novel_id import NovelId
-        from domain.novel.value_objects.foreshadowing import (
-            Foreshadowing, ForeshadowingStatus, ImportanceLevel,
-        )
+        from application.world.services.chapter_narrative_sync import sync_chapter_narrative_after_save
 
         try:
-            registry = self.foreshadowing_repo.get_by_novel_id(NovelId(task.novel_id.value))
-            if not registry:
-                logger.warning(f"[BG] 小说 {task.novel_id.value} 不存在，跳过伏笔提取")
-                return
-
-            for line in raw.strip().split("\n"):
-                parts = line.strip().split("|")
-                if parts and parts[0].strip():
-                    foreshadow_desc = parts[0].strip()
-                    try:
-                        foreshadowing = Foreshadowing(
-                            id=str(uuid.uuid4()),
-                            description=foreshadow_desc,
-                            planted_in_chapter=max(1, chapter_number),
-                            importance=ImportanceLevel.MEDIUM,
-                            status=ForeshadowingStatus.PLANTED,
-                        )
-                        registry.register(foreshadowing)
-                    except Exception:
-                        pass  # 重复或无效伏笔忽略
-
-            self.foreshadowing_repo.save(registry)
-        except Exception as e:
-            logger.warning(f"[BG] 伏笔提取存储失败：{e}")
-
-        logger.info(f"[BG] 伏笔提取完成：第 {chapter_number} 章")
+            asyncio.run(
+                sync_chapter_narrative_after_save(
+                    task.novel_id.value,
+                    chapter_number,
+                    content,
+                    self.knowledge_service,
+                    self.chapter_indexing_service,
+                    self.llm_service,
+                    triple_repository=self.triple_repository,
+                    foreshadowing_repo=self.foreshadowing_repo,
+                )
+            )
+        except RuntimeError as e:
+            if "asyncio.run() cannot be called from a running event loop" not in str(e):
+                raise
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(
+                    sync_chapter_narrative_after_save(
+                        task.novel_id.value,
+                        chapter_number,
+                        content,
+                        self.knowledge_service,
+                        self.chapter_indexing_service,
+                        self.llm_service,
+                        triple_repository=self.triple_repository,
+                        foreshadowing_repo=self.foreshadowing_repo,
+                    )
+                )
+            finally:
+                loop.close()
+        logger.info(f"[BG] extract_bundle 完成：第 {chapter_number} 章")
