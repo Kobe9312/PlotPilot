@@ -50,10 +50,10 @@
           </n-card>
 
           <!-- 本章规划（结构树节点：节拍/大纲/视角等） -->
-          <n-card v-if="chapterPlan" title="本章规划（结构树）" size="small" :bordered="true">
+          <n-card v-if="chapterPlan" title="本章规划（结构树）" size="small" :bordered="true" class="ce-card-plan">
             <n-space vertical :size="8">
-              <n-text depth="3" style="font-size: 12px">
-                与左侧「宏观规划」结构树同源；用于写作前对齐本章节拍与要点。
+              <n-text depth="3" class="ce-card-lead">
+                与左侧「宏观规划」同源；写作前对齐标题、大纲节拍与 POV。下方「伏笔建议」空时可沿用此处大纲做匹配。
               </n-text>
               <n-descriptions :column="1" label-placement="left" size="small" label-style="white-space: nowrap">
                 <n-descriptions-item label="标题">{{ chapterPlan.title || '—' }}</n-descriptions-item>
@@ -84,7 +84,15 @@
           </n-alert>
 
           <!-- 元素关联 -->
-          <n-card title="人物 / 地点 / 道具…（章级关联）" size="small" :bordered="true">
+          <n-card size="small" :bordered="true" class="ce-card-elements">
+            <template #header>
+              <div class="ce-card-header-col">
+                <span class="ce-card-header-title">人物 / 地点 / 道具（章级）</span>
+                <n-text depth="3" class="ce-card-header-sub">
+                  与 Bible 元素 ID 一致，供本章检索、批注与叙事同步；非全书设定。
+                </n-text>
+              </div>
+            </template>
             <template #header-extra>
               <n-space :size="6">
                 <n-select
@@ -103,15 +111,15 @@
             <n-spin :show="loading">
               <n-space vertical :size="5">
                 <n-space v-if="groupedCharacters.length" vertical :size="4">
-                  <n-text strong style="font-size: 12px">人物</n-text>
+                  <n-text strong class="ce-group-label">人物</n-text>
                   <div v-for="elem in groupedCharacters" :key="elem.id" class="ce-item">
                     <div class="ce-item-info">
-                      <n-tag :type="elemTypeColor(elem.element_type)" size="tiny" round>{{ elemTypeLabel(elem.element_type) }}</n-tag>
-                      <n-text style="font-size:12px; flex:1">{{ elem.element_id }}</n-text>
-                      <n-tag size="tiny" round>{{ elem.relation_type }}</n-tag>
+                      <n-text class="ce-id">{{ elem.element_id }}</n-text>
+                      <n-tag size="tiny" round>{{ relationLabel(elem.relation_type) }}</n-tag>
                       <n-tag :type="elem.importance === 'major' ? 'error' : elem.importance === 'minor' ? 'default' : 'info'" size="tiny" round>
                         {{ importanceLabel(elem.importance) }}
                       </n-tag>
+                      <n-text v-if="elem.notes" depth="3" class="ce-notes ce-notes--inline">{{ elem.notes }}</n-text>
                     </div>
                     <n-button
                       v-if="!readOnly"
@@ -125,15 +133,15 @@
                 </n-space>
 
                 <n-space v-if="groupedLocations.length" vertical :size="4">
-                  <n-text strong style="font-size: 12px">地点</n-text>
+                  <n-text strong class="ce-group-label">地点</n-text>
                   <div v-for="elem in groupedLocations" :key="elem.id" class="ce-item">
                     <div class="ce-item-info">
-                      <n-tag :type="elemTypeColor(elem.element_type)" size="tiny" round>{{ elemTypeLabel(elem.element_type) }}</n-tag>
-                      <n-text style="font-size:12px; flex:1">{{ elem.element_id }}</n-text>
-                      <n-tag size="tiny" round>{{ elem.relation_type }}</n-tag>
+                      <n-text class="ce-id">{{ elem.element_id }}</n-text>
+                      <n-tag size="tiny" round>{{ relationLabel(elem.relation_type) }}</n-tag>
                       <n-tag :type="elem.importance === 'major' ? 'error' : elem.importance === 'minor' ? 'default' : 'info'" size="tiny" round>
                         {{ importanceLabel(elem.importance) }}
                       </n-tag>
+                      <n-text v-if="elem.notes" depth="3" class="ce-notes ce-notes--inline">{{ elem.notes }}</n-text>
                     </div>
                     <n-button
                       v-if="!readOnly"
@@ -147,15 +155,16 @@
                 </n-space>
 
                 <n-space v-if="groupedOther.length" vertical :size="4">
-                  <n-text strong style="font-size: 12px">其他</n-text>
+                  <n-text strong class="ce-group-label">其他</n-text>
                   <div v-for="elem in groupedOther" :key="elem.id" class="ce-item">
                     <div class="ce-item-info">
                       <n-tag :type="elemTypeColor(elem.element_type)" size="tiny" round>{{ elemTypeLabel(elem.element_type) }}</n-tag>
-                      <n-text style="font-size:12px; flex:1">{{ elem.element_id }}</n-text>
-                      <n-tag size="tiny" round>{{ elem.relation_type }}</n-tag>
+                      <n-text class="ce-id ce-id--inline">{{ elem.element_id }}</n-text>
+                      <n-tag size="tiny" round>{{ relationLabel(elem.relation_type) }}</n-tag>
                       <n-tag :type="elem.importance === 'major' ? 'error' : elem.importance === 'minor' ? 'default' : 'info'" size="tiny" round>
                         {{ importanceLabel(elem.importance) }}
                       </n-tag>
+                      <n-text v-if="elem.notes" depth="3" class="ce-notes">{{ elem.notes }}</n-text>
                     </div>
                     <n-button
                       v-if="!readOnly"
@@ -235,7 +244,9 @@
             <ForeshadowChapterSuggestionsPanel
               :slug="slug"
               :current-chapter-number="currentChapterNumber"
+              :prefill-outline="chapterPlan?.outline || ''"
               embedded
+              compact
             />
           </n-card>
 
@@ -376,6 +387,7 @@ const elemTypeColor = (t: string): 'error' | 'warning' | 'info' | 'success' | 'd
   return map[t] ?? 'default'
 }
 const importanceLabel = (i: string) => importanceOptions.find(o => o.value === i)?.label ?? i
+const relationLabel = (r: string) => relationTypeOptions.find(o => o.value === r)?.label ?? r
 
 const groupedCharacters = computed(() =>
   elements.value.filter(e => e.element_type === 'character')
@@ -544,5 +556,59 @@ onMounted(async () => {
 }
 .cliche-collapse :deep(.n-collapse-item__header) {
   font-size: 13px;
+}
+
+.ce-card-lead {
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.ce-card-header-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ce-card-header-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ce-card-header-sub {
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ce-group-label {
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+.ce-id {
+  font-size: 12px;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.ce-id--inline {
+  flex: 1;
+}
+
+.ce-notes {
+  font-size: 11px;
+  flex-basis: 100%;
+  margin-top: 4px;
+}
+
+.ce-notes--inline {
+  flex-basis: auto;
+  margin-top: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
