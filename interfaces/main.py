@@ -96,6 +96,9 @@ async def startup_event():
     logger.info("✅ FastAPI application started successfully")
     logger.info(f"📊 Registered {len(app.routes)} routes")
     
+    # 重启时将所有运行中的小说设置为停止状态
+    _stop_all_running_novels()
+    
     # 启动自动驾驶守护进程（后台线程）
     _start_autopilot_daemon_thread()
 
@@ -114,6 +117,45 @@ async def shutdown_event():
 # 守护进程进程管理（使用独立进程避免阻塞主事件循环）
 _daemon_process = None
 _daemon_stop_event = None
+
+
+def _stop_all_running_novels():
+    """重启时将所有运行中的小说设置为停止状态"""
+    try:
+        from application.paths import get_db_path
+        import sqlite3
+        from pathlib import Path
+        
+        db_path = get_db_path()
+        db_path_obj = Path(db_path) if isinstance(db_path, str) else db_path
+        
+        if not db_path_obj.exists():
+            logger.warning(f"⚠️  数据库文件不存在: {db_path}")
+            return
+        
+        conn = sqlite3.connect(str(db_path_obj), timeout=10.0)
+        try:
+            # 检查有多少运行中的小说
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM novels WHERE autopilot_status = 'running'"
+            )
+            running_count = cursor.fetchone()[0]
+            
+            if running_count > 0:
+                # 将所有运行中的小说设置为停止状态
+                conn.execute(
+                    "UPDATE novels SET autopilot_status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE autopilot_status = 'running'"
+                )
+                conn.commit()
+                logger.info(f"🔒 已将 {running_count} 本运行中的小说设置为停止状态（服务重启）")
+            else:
+                logger.info("✅ 没有运行中的小说需要停止")
+                
+        finally:
+            conn.close()
+            
+    except Exception as e:
+        logger.error(f"❌ 停止运行中小说失败: {e}", exc_info=True)
 
 
 def _run_daemon_in_process(stop_event: threading.Event, log_level: int, log_file: str):

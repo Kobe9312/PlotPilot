@@ -43,6 +43,11 @@ class UpdateNovelRequest(BaseModel):
     premise: str = Field(None, description="故事梗概/创意")
 
 
+class UpdateAutoApproveRequest(BaseModel):
+    """更新全自动模式请求"""
+    auto_approve_mode: bool = Field(..., description="是否开启全自动模式（跳过所有人工审阅）")
+
+
 async def _generate_bible_background(
     novel_id: str,
     title: str,
@@ -207,6 +212,31 @@ async def delete_novel(
         service: Novel 服务
     """
     service.delete_novel(novel_id)
+
+
+@router.patch("/{novel_id}/auto-approve-mode", response_model=NovelDTO)
+async def update_auto_approve_mode(
+    novel_id: str,
+    request: UpdateAutoApproveRequest,
+    service: NovelService = Depends(get_novel_service)
+):
+    """更新全自动模式设置
+    
+    Args:
+        novel_id: 小说 ID
+        request: 更新全自动模式请求
+        service: Novel 服务
+        
+    Returns:
+        更新后的小说 DTO
+        
+    Raises:
+        HTTPException: 如果小说不存在
+    """
+    try:
+        return service.update_auto_approve_mode(novel_id, request.auto_approve_mode)
+    except EntityNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @router.get("/{novel_id}/statistics")
