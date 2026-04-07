@@ -162,7 +162,7 @@ import RealtimeLogStream from './RealtimeLogStream.vue'
 import { subscribeChapterStream } from '../../api/config'
 
 const props = defineProps({ novelId: String })
-const emit = defineEmits(['status-change', 'desk-refresh', 'chapter-content-update'])
+const emit = defineEmits(['status-change', 'desk-refresh', 'chapter-content-update', 'chapter-start', 'chapter-chunk'])
 const message = useMessage()
 
 const status = ref(null)

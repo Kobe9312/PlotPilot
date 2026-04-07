@@ -194,6 +194,8 @@ class StreamingBus:
     def get_chunk(self, novel_id: str, timeout: float = 0.05) -> Optional[str]:
         """从跨进程队列获取增量文字（非阻塞，带超时）
         
+        注意：这是一个同步方法，会阻塞当前线程。在异步上下文中请使用 get_chunk_async。
+        
         Args:
             novel_id: 小说ID（用于过滤消息）
             timeout: 超时时间（秒）
@@ -238,6 +240,49 @@ class StreamingBus:
             except Exception as e:
                 # 队列为空，继续等待
                 time.sleep(0.001)  # 短暂休眠避免忙等待
+                
+        # 超时未找到匹配消息
+        return None
+    
+    async def get_chunk_async(self, novel_id: str, timeout: float = 0.05) -> Optional[str]:
+        """从跨进程队列获取增量文字（异步版本，用于 SSE 等异步上下文）
+        
+        Args:
+            novel_id: 小说ID（用于过滤消息）
+            timeout: 超时时间（秒）
+            
+        Returns:
+            Optional[str]: 增量文字，如果没有则返回 None
+        """
+        queue = _get_queue()
+        if queue is None:
+            logger.debug("[StreamingBus] get_chunk_async: 队列不可用")
+            return None
+        
+        # 尝试多次读取，直到找到匹配的小说消息或超时
+        start_time = time.time()
+        max_wait_time = timeout
+        
+        while (time.time() - start_time) < max_wait_time:
+            try:
+                # 使用非阻塞方式获取，避免阻塞事件循环
+                message = queue.get_nowait()
+                
+                # 检查消息是否属于当前小说
+                if isinstance(message, dict):
+                    msg_novel_id = message.get("novel_id")
+                    if msg_novel_id == novel_id:
+                        return message.get("chunk")
+                    else:
+                        # 消息不属于当前小说，重新放回队列
+                        try:
+                            queue.put_nowait(message)
+                        except:
+                            logger.warning(f"[StreamingBus] get_chunk_async: 无法将消息重新放回队列，小说ID: {msg_novel_id}")
+                            
+            except:
+                # 队列为空，使用 asyncio.sleep 避免阻塞事件循环
+                await asyncio.sleep(0.001)
                 
         # 超时未找到匹配消息
         return None

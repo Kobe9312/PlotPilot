@@ -554,8 +554,8 @@ async def autopilot_chapter_stream(novel_id: str):
                             streaming_bus.clear(novel_id)  # 清空旧内容
                         last_chapter_number = chapter_number
 
-                # 从跨进程队列获取增量文字
-                chunk = streaming_bus.get_chunk(novel_id, timeout=0.05)
+                # 从跨进程队列获取增量文字（使用异步版本避免阻塞事件循环）
+                chunk = await streaming_bus.get_chunk_async(novel_id, timeout=0.05)
 
                 if chunk:
                     event = {
@@ -568,6 +568,7 @@ async def autopilot_chapter_stream(novel_id: str):
                         },
                     }
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    logger.debug(f"[SSE] 发送 chapter_chunk: {len(chunk)} chars, novel={novel_id}")
 
                 # 心跳
                 heartbeat_counter += 1
