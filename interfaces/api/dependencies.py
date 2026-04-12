@@ -412,6 +412,19 @@ def get_chapter_indexing_service():
     return ChapterIndexingService(vs, es)
 
 
+def get_triple_indexing_service():
+    """获取三元组索引服务（依赖 VectorStore + Embedding，任一不可用则返回 None）。
+    
+    用于将三元组向量化并支持语义检索。
+    """
+    vs = get_vector_store()
+    es = get_embedding_service()
+    if vs is None or es is None:
+        return None
+    from application.analyst.services.triple_indexing_service import TripleIndexingService
+    return TripleIndexingService(vs, es)
+
+
 def get_vector_store() -> Optional[VectorStore]:
     """获取向量存储
 

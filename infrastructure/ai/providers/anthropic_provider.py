@@ -21,6 +21,10 @@ class AnthropicProvider(BaseProvider):
     """Anthropic LLM 提供商实现
 
     使用 Anthropic API 实现 LLM 服务。
+
+    双端点策略：
+    - generate() (规划/分析): 使用官方 SDK，走官方 API (HTTPS)
+    - stream_generate() (正文生成): 使用自定义 httpx，走代理服务器
     """
 
     def __init__(self, settings: Settings):
@@ -37,7 +41,9 @@ class AnthropicProvider(BaseProvider):
         if not settings.api_key:
             raise ValueError("API key is required for AnthropicProvider")
 
-        client_kw = {
+        # 官方 SDK 客户端 - 不设置 base_url，直接走官方 API (HTTPS)
+        # 用于 generate() (规划/分析等场景)
+        official_client_kw = {
             "api_key": settings.api_key,
             "timeout": 300.0,  # 5分钟超时
             "max_retries": 5,  # 增加重试次数
@@ -45,10 +51,12 @@ class AnthropicProvider(BaseProvider):
                 "User-Agent": "claude-cli/2.1.87 (external, cli)",
             },
         }
-        if settings.base_url:
-            client_kw["base_url"] = settings.base_url
-        self.client = Anthropic(**client_kw)
-        self.async_client = AsyncAnthropic(**client_kw)
+        self.client = Anthropic(**official_client_kw)
+        self.async_client = AsyncAnthropic(**official_client_kw)
+
+        # 代理地址 - 用于 stream_generate() (正文生成)
+        # 如果设置了 base_url，则使用代理；否则回退到官方 API
+        self.proxy_base_url = settings.base_url
 
     async def generate(
         self,
@@ -104,10 +112,13 @@ class AnthropicProvider(BaseProvider):
     ) -> AsyncIterator[str]:
         """流式生成内容。
 
-        直接使用 httpx 解析 SSE 流，绕过 anthropic SDK 的兼容性问题。
+        直接使用 httpx 解析 SSE 流，走代理服务器（如果配置了 base_url）。
+        用于正文生成场景，支持 HTTP 代理。
         """
-        base_url = self.settings.base_url or "https://api.anthropic.com"
+        # 使用代理地址（如果有配置），否则回退官方 API
+        base_url = self.proxy_base_url or "https://api.anthropic.com"
         url = f"{base_url}/v1/messages"
+        logger.debug(f"[Stream] Using endpoint: {url}")
 
         headers = {
             "x-api-key": self.settings.api_key,

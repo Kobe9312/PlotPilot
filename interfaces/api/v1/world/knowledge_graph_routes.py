@@ -374,3 +374,117 @@ async def get_knowledge_graph_statistics(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取统计信息失败: {str(e)}")
+
+
+# ==================== 向量索引与语义检索 ====================
+
+@router.post("/novels/{novel_id}/index")
+async def index_novel_triples(
+    novel_id: str,
+    repo: TripleRepository = Depends(get_triple_repo)
+):
+    """
+    将小说的所有三元组索引到向量数据库
+    
+    建立向量索引后，支持通过语义相似度检索三元组。
+    这是一个耗时操作，建议在后台执行。
+    """
+    try:
+        from interfaces.api.dependencies import get_triple_indexing_service
+        
+        indexing_service = get_triple_indexing_service()
+        if indexing_service is None:
+            raise HTTPException(
+                status_code=503, 
+                detail="向量索引服务不可用，请检查 EMBEDDING_SERVICE 配置"
+            )
+        
+        # 获取所有三元组
+        triples = await repo.get_by_novel(novel_id)
+        if not triples:
+            return {
+                "success": True,
+                "message": "没有需要索引的三元组",
+                "data": {"indexed_count": 0}
+            }
+        
+        # 转换为字典格式
+        triple_dicts = []
+        for t in triples:
+            triple_dicts.append({
+                "id": t.id,
+                "subject": t.subject_id,
+                "predicate": t.predicate,
+                "object": t.object_id,
+                "subject_type": t.subject_type,
+                "object_type": t.object_type,
+                "description": t.description,
+                "chapter_number": t.first_appearance,
+                "confidence": t.confidence,
+            })
+        
+        # 批量索引
+        indexed_count = await indexing_service.index_triples_batch(novel_id, triple_dicts)
+        
+        return {
+            "success": True,
+            "message": f"成功索引 {indexed_count} 个三元组",
+            "data": {
+                "total_triples": len(triples),
+                "indexed_count": indexed_count
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"索引三元组失败: {str(e)}")
+
+
+@router.post("/novels/{novel_id}/search")
+async def semantic_search_triples(
+    novel_id: str,
+    query: str,
+    limit: int = 10,
+    min_score: float = 0.5,
+):
+    """
+    语义检索三元组
+    
+    使用向量相似度搜索找到与查询语义相关的三元组。
+    需要先调用 /novels/{novel_id}/index 建立索引。
+    
+    Args:
+        novel_id: 小说 ID
+        query: 查询文本（如 "战斗技能"、"武器属性"）
+        limit: 返回结果数量（默认 10）
+        min_score: 最小相似度阈值（默认 0.5）
+    """
+    try:
+        from interfaces.api.dependencies import get_triple_indexing_service
+        
+        indexing_service = get_triple_indexing_service()
+        if indexing_service is None:
+            raise HTTPException(
+                status_code=503,
+                detail="向量索引服务不可用，请检查 EMBEDDING_SERVICE 配置"
+            )
+        
+        results = await indexing_service.search_triples(
+            novel_id=novel_id,
+            query=query,
+            limit=limit,
+            min_score=min_score,
+        )
+        
+        return {
+            "success": True,
+            "data": {
+                "query": query,
+                "total": len(results),
+                "results": results
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"语义检索失败: {str(e)}")
