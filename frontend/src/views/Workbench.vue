@@ -1,6 +1,6 @@
 <template>
   <div class="workbench">
-    <StatsTopBar :slug="slug" @open-settings="showLLMSettings = true" />
+    <StatsTopBar :slug="slug" @open-settings="showLLMSettings = true" @open-wizard="showSetupWizard = true" />
 
     <n-spin :show="pageLoading" class="workbench-spin" description="加载工作台…">
       <div class="workbench-inner">
@@ -59,6 +59,17 @@
 
     <!-- LLM Settings Modal -->
     <LLMSettingsModal v-model:show="showLLMSettings" />
+
+    <NovelSetupGuide
+      v-if="showSetupWizard && novelId"
+      :key="novelId"
+      :novel-id="novelId"
+      :target-chapters="targetChapters"
+      :show="true"
+      @update:show="(open) => { if (!open) showSetupWizard = false }"
+      @complete="showSetupWizard = false"
+      @skip="showSetupWizard = false"
+    />
   </div>
 </template>
 
@@ -75,6 +86,7 @@ import WorkArea from '../components/workbench/WorkArea.vue'
 import SettingsPanel from '../components/workbench/SettingsPanel.vue'
 import ActPlanningModal from '../components/workbench/ActPlanningModal.vue'
 import LLMSettingsModal from '../components/LLMSettingsModal.vue'
+import NovelSetupGuide from '../components/onboarding/NovelSetupGuide.vue'
 
 const route = useRoute()
 const message = useMessage()
@@ -118,6 +130,8 @@ const {
   biblePanelKey,
   pageLoading,
   bookMeta,
+  targetChapters,
+  novelId,
   currentJobId,
   currentChapterId,
   chapterContent,
@@ -128,6 +142,8 @@ const {
   goToChapter,
   handleChapterSelect,
 } = useWorkbench({ slug })
+
+const showSetupWizard = ref(false)
 
 const currentChapter = computed(() => {
   if (!currentChapterId.value) return null

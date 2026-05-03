@@ -710,7 +710,7 @@ class AutopilotDaemon:
                     style_summary=bundle["style_summary"],
                     voice_anchors=voice_anchors,
                 )
-                cfg = GenerationConfig(max_tokens=3000, temperature=0.85)
+                cfg = GenerationConfig(max_tokens=int(tw * 1.5), temperature=0.85)
                 beat_content = await self._stream_llm_with_stop_watch(prompt, cfg, novel=novel)
             else:
                 beat_content = await self._stream_one_beat(

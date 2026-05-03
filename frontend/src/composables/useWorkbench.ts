@@ -41,6 +41,8 @@ export function useWorkbench(options: UseWorkbenchOptions) {
   const bookTitle = ref('')
   const chapters = ref<{ id: number; number: number; title: string; word_count: number }[]>([])
   const bookMeta = ref<BookMeta>({})
+  const targetChapters = ref(100)
+  const novelId = ref('')
   const pageLoading = ref(true)
   const currentChapterId = ref<number | null>(null)
   const chapterContent = ref('')
@@ -69,7 +71,8 @@ export function useWorkbench(options: UseWorkbenchOptions) {
 
     bookTitle.value = novelData.title || slug
 
-    // Map ChapterDTO[] to the format expected by the UI
+    novelId.value = novelData.id || slug
+    targetChapters.value = novelData.target_chapters || 100
     chapters.value = chaptersData.map(ch => ({
       id: ch.number,
       number: ch.number,
@@ -182,6 +185,8 @@ export function useWorkbench(options: UseWorkbenchOptions) {
     biblePanelKey,
     pageLoading,
     bookMeta,
+    targetChapters,
+    novelId,
     currentJobId,
     currentChapterId,
     chapterContent,

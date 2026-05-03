@@ -305,7 +305,8 @@ class AutoNovelGenerationWorkflow:
         chapter_number: int,
         outline: str,
         scene_director: Optional[SceneDirectorAnalysis] = None,
-        enable_beats: bool = True
+        enable_beats: bool = True,
+        target_words: int = 2500,
     ) -> GenerationResult:
         """生成章节（完整工作流）
 
@@ -352,7 +353,7 @@ class AutoNovelGenerationWorkflow:
         beats = []
         if enable_beats:
             logger.info("  → 启用节拍模式，拆分大纲为微观节拍")
-            beats = self.context_builder.magnify_outline_to_beats(chapter_number, outline)
+            beats = self.context_builder.magnify_outline_to_beats(chapter_number, outline, target_chapter_words=target_words)
             logger.info(f"  ✓ 已拆分为 {len(beats)} 个微观节拍")
         
         # 根据是否使用节拍选择不同的生成策略
@@ -393,6 +394,7 @@ class AutoNovelGenerationWorkflow:
                 plot_tension=bundle["plot_tension"],
                 style_summary=bundle["style_summary"],
                 voice_anchors=bundle.get("voice_anchors") or "",
+                target_words=target_words,
             )
             logger.info(f"  → 发送请求到 LLM (max_tokens={config.max_tokens}, temperature={config.temperature})")
             llm_result = await self.llm_service.generate(prompt, config)
@@ -442,7 +444,8 @@ class AutoNovelGenerationWorkflow:
         chapter_number: int,
         outline: str,
         scene_director: Optional[SceneDirectorAnalysis] = None,
-        enable_beats: bool = True
+        enable_beats: bool = True,
+        target_words: int = 2500,
     ) -> AsyncIterator[Dict[str, Any]]:
         """流式生成章节：阶段事件 + 正文 token 流 + 最终 done（含一致性报告）。
 
@@ -481,7 +484,7 @@ class AutoNovelGenerationWorkflow:
             beats = []
             if enable_beats:
                 logger.info("  → 启用节拍模式，拆分大纲为微观节拍")
-                beats = self.context_builder.magnify_outline_to_beats(chapter_number, outline)
+                beats = self.context_builder.magnify_outline_to_beats(chapter_number, outline, target_chapter_words=target_words)
                 logger.info(f"  ✓ 已拆分为 {len(beats)} 个微观节拍")
                 
                 # 发送节拍信息用于前端展示
@@ -543,6 +546,7 @@ class AutoNovelGenerationWorkflow:
                     plot_tension=bundle["plot_tension"],
                     style_summary=bundle["style_summary"],
                     voice_anchors=bundle.get("voice_anchors") or "",
+                    target_words=target_words,
                 )
                 
                 logger.info(f"  → 发送流式请求到 LLM")
@@ -744,6 +748,7 @@ class AutoNovelGenerationWorkflow:
         beat_target_words: Optional[int] = None,
         voice_anchors: str = "",
         chapter_draft_so_far: str = "",
+        target_words: int = 2500,
     ) -> Prompt:
         """构建与 HTTP 单章 / 流式 / 托管按节拍写作一致的 Prompt（对外 API）。"""
         return self._build_prompt(
@@ -774,6 +779,7 @@ class AutoNovelGenerationWorkflow:
         beat_target_words: Optional[int] = None,
         voice_anchors: str = "",
         chapter_draft_so_far: str = "",
+        target_words: int = 2500,
     ) -> Prompt:
         """构建 LLM 提示词
 
@@ -821,9 +827,9 @@ class AutoNovelGenerationWorkflow:
         prior_in_chapter = format_prior_draft_for_prompt(chapter_draft_so_far)
         # 字数控制：硬性上限，超出将被截断
         length_rule = (
-            f"7. 【硬性字数上限】本段最多 {beat_target_words} 字，超出将被截断，请精炼叙述。"
+            f"7. 本段约 {beat_target_words} 字（本章分多节输出之一，勿写章节标题）"
             if beat_target_words
-            else ("7. 章节长度：3000-4000字" if not beat_mode else "7. 按下方节拍说明控制篇幅，勿写章节标题")
+            else (f"7. 章节长度：{target_words}字左右" if not beat_mode else "7. 按下方节拍说明控制篇幅，勿写章节标题")
         )
         beat_extra = ""
         if beat_mode and beat_index is not None and total_beats is not None and total_beats > 0:

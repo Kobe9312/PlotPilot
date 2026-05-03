@@ -99,8 +99,17 @@
 
       <!-- Step 2: Generate Characters -->
       <div v-else-if="currentStep === 2" class="step-panel">
-        <n-alert v-if="charactersError" type="error" style="margin-bottom: 16px; width: 100%">
-          {{ charactersError }}
+        <n-alert v-if="charactersError" type="warning" style="margin-bottom: 16px; width: 100%">
+          <template #header>
+            <span>{{ charactersError }}</span>
+          </template>
+          <template #footer>
+            <n-space justify="end">
+              <n-button size="small" type="primary" :loading="retryingCharacters" @click="retryCharacters">
+                刷新检查
+              </n-button>
+            </n-space>
+          </template>
         </n-alert>
         <n-alert type="info" class="wizard-hint-alert" style="margin-bottom: 16px; width: 100%">
           与第 1 步相同，人物生成在后台跑 LLM；本步界面最长约 {{ WIZARD_STEP_TIMEOUT_SECONDS }} 秒，请耐心等待。超时或失败时可稍后在 Bible 中补全。
@@ -135,8 +144,17 @@
 
       <!-- Step 3: Generate Locations -->
       <div v-else-if="currentStep === 3" class="step-panel">
-        <n-alert v-if="locationsError" type="error" style="margin-bottom: 16px; width: 100%">
-          {{ locationsError }}
+        <n-alert v-if="locationsError" type="warning" style="margin-bottom: 16px; width: 100%">
+          <template #header>
+            <span>{{ locationsError }}</span>
+          </template>
+          <template #footer>
+            <n-space justify="end">
+              <n-button size="small" type="primary" :loading="retryingLocations" @click="retryLocations">
+                刷新检查
+              </n-button>
+            </n-space>
+          </template>
         </n-alert>
         <n-alert type="info" class="wizard-hint-alert" style="margin-bottom: 16px; width: 100%">
           地图与地点同样依赖 LLM；本步界面最长约 {{ WIZARD_STEP_TIMEOUT_SECONDS }} 秒。若卡住请先确认 API 未报错，再于工作台重试生成。
@@ -491,11 +509,13 @@ const styleConventionDisplay = computed(() => styleConventionFromBible(bibleData
 const generatingCharacters = ref(false)
 const charactersGenerated = ref(false)
 const charactersError = ref('')
+const retryingCharacters = ref(false)
 
 // 第3步：生成地点
 const generatingLocations = ref(false)
 const locationsGenerated = ref(false)
 const locationsError = ref('')
+const retryingLocations = ref(false)
 
 /** 作废第 2/3 步后台轮询（关闭向导或重置时递增） */
 const step2PollEpoch = ref(0)
@@ -855,6 +875,82 @@ function stopGenerationOnClose() {
   generatingBible.value = false
 }
 
+function triggerStepGeneration(step: number) {
+  if (step === 1 && !bibleGenerated.value) {
+    void startBibleGeneration()
+  } else if (step === 2 && !charactersGenerated.value) {
+    step2PollEpoch.value += 1
+    const epoch2 = step2PollEpoch.value
+    generatingCharacters.value = true
+    charactersError.value = ''
+    bibleApi.generateBible(props.novelId, 'characters').then(() => {
+      pollBibleUntil(
+        (b) => (b.characters?.length ?? 0) > 0,
+        {
+          isStale: () =>
+            step2PollEpoch.value !== epoch2 || currentStep.value !== 2 || !generatingCharacters.value,
+          watchBackendFailure: true,
+          onSuccess: () => {
+            generatingCharacters.value = false
+            charactersGenerated.value = true
+          },
+          onTimeout: () => {
+            generatingCharacters.value = false
+            charactersError.value = `等待人物生成超时（约 ${WIZARD_STEP_TIMEOUT_SECONDS} 秒）。后台可能仍在跑——请点击「刷新检查」重试。`
+            message.warning('人物生成超时')
+          },
+          onFatal: (msg) => {
+            generatingCharacters.value = false
+            charactersError.value = msg
+            message.error(msg)
+          },
+        },
+      )
+    }).catch((error: unknown) => {
+      console.error('Resume characters failed:', error)
+      generatingCharacters.value = false
+      charactersError.value = isLikelyTimeoutError(error)
+        ? '提交人物生成超时，请检查网络与 API 后再试。'
+        : formatApiError(error) || '人物生成启动失败'
+    })
+  } else if (step === 3 && !locationsGenerated.value) {
+    step3PollEpoch.value += 1
+    const epoch3 = step3PollEpoch.value
+    generatingLocations.value = true
+    locationsError.value = ''
+    bibleApi.generateBible(props.novelId, 'locations').then(() => {
+      pollBibleUntil(
+        (b) => (b.locations?.length ?? 0) > 0,
+        {
+          isStale: () =>
+            step3PollEpoch.value !== epoch3 || currentStep.value !== 3 || !generatingLocations.value,
+          watchBackendFailure: true,
+          onSuccess: () => {
+            generatingLocations.value = false
+            locationsGenerated.value = true
+          },
+          onTimeout: () => {
+            generatingLocations.value = false
+            locationsError.value = `等待地图生成超时（约 ${WIZARD_STEP_TIMEOUT_SECONDS} 秒）。请点击「刷新检查」重试。`
+            message.warning('地图生成超时')
+          },
+          onFatal: (msg) => {
+            generatingLocations.value = false
+            locationsError.value = msg
+            message.error(msg)
+          },
+        },
+      )
+    }).catch((error: unknown) => {
+      console.error('Resume locations failed:', error)
+      generatingLocations.value = false
+      locationsError.value = isLikelyTimeoutError(error)
+        ? '提交地图生成超时，请检查网络与 API 后再试。'
+        : formatApiError(error) || '地图生成启动失败'
+    })
+  }
+}
+
 watch(
   () => props.show,
   async (val) => {
@@ -863,10 +959,7 @@ watch(
       // 检查已有进度，确定从哪一步继续
       const step = await detectWizardProgress()
       currentStep.value = step
-      // 只有在第 1 步且世界观未生成时才启动生成
-      if (step === 1 && !bibleGenerated.value) {
-        void startBibleGeneration()
-      }
+      triggerStepGeneration(step)
     } else {
       stopGenerationOnClose()
     }
@@ -878,9 +971,7 @@ onMounted(async () => {
     resetWizardStateForOpen()
     const step = await detectWizardProgress()
     currentStep.value = step
-    if (step === 1 && !bibleGenerated.value) {
-      void startBibleGeneration()
-    }
+    triggerStepGeneration(step)
   }
 })
 
@@ -982,6 +1073,108 @@ const handleNext = async () => {
     }
   } else if (currentStep.value < 5) {
     currentStep.value++
+  }
+}
+
+const retryCharacters = async () => {
+  retryingCharacters.value = true
+  charactersError.value = ''
+  try {
+    const bible = await bibleApi.getBible(props.novelId, { timeout: 30_000 })
+    bibleData.value = bible
+    if ((bible.characters?.length ?? 0) > 0) {
+      charactersGenerated.value = true
+      generatingCharacters.value = false
+      message.success('人物数据已就绪，后台早已生成完毕')
+      return
+    }
+    message.info('数据尚未生成，正在重新触发生成…')
+    step2PollEpoch.value += 1
+    const epoch2 = step2PollEpoch.value
+    generatingCharacters.value = true
+    charactersGenerated.value = false
+    await bibleApi.generateBible(props.novelId, 'characters')
+    pollBibleUntil(
+      (b) => (b.characters?.length ?? 0) > 0,
+      {
+        isStale: () =>
+          step2PollEpoch.value !== epoch2 || currentStep.value !== 2 || !generatingCharacters.value,
+        watchBackendFailure: true,
+        onSuccess: () => {
+          generatingCharacters.value = false
+          charactersGenerated.value = true
+        },
+        onTimeout: () => {
+          generatingCharacters.value = false
+          charactersError.value = `等待人物生成超时（约 ${WIZARD_STEP_TIMEOUT_SECONDS} 秒）。后台可能仍在跑——请到工作台 Bible 查看；若无数据可返回上一步再进入本步重试，或在 Bible 手动生成。`
+          message.warning('人物生成超时')
+        },
+        onFatal: (msg) => {
+          generatingCharacters.value = false
+          charactersError.value = msg
+          message.error(msg)
+        },
+      },
+    )
+  } catch (error: unknown) {
+    console.error('Retry characters failed:', error)
+    generatingCharacters.value = false
+    charactersError.value = isLikelyTimeoutError(error)
+      ? '刷新请求超时，请检查网络后再试。'
+      : formatApiError(error) || '刷新检查失败'
+  } finally {
+    retryingCharacters.value = false
+  }
+}
+
+const retryLocations = async () => {
+  retryingLocations.value = true
+  locationsError.value = ''
+  try {
+    const bible = await bibleApi.getBible(props.novelId, { timeout: 30_000 })
+    bibleData.value = bible
+    if ((bible.locations?.length ?? 0) > 0) {
+      locationsGenerated.value = true
+      generatingLocations.value = false
+      message.success('地点数据已就绪，后台早已生成完毕')
+      return
+    }
+    message.info('数据尚未生成，正在重新触发生成…')
+    step3PollEpoch.value += 1
+    const epoch3 = step3PollEpoch.value
+    generatingLocations.value = true
+    locationsGenerated.value = false
+    await bibleApi.generateBible(props.novelId, 'locations')
+    pollBibleUntil(
+      (b) => (b.locations?.length ?? 0) > 0,
+      {
+        isStale: () =>
+          step3PollEpoch.value !== epoch3 || currentStep.value !== 3 || !generatingLocations.value,
+        watchBackendFailure: true,
+        onSuccess: () => {
+          generatingLocations.value = false
+          locationsGenerated.value = true
+        },
+        onTimeout: () => {
+          generatingLocations.value = false
+          locationsError.value = `等待地图生成超时（约 ${WIZARD_STEP_TIMEOUT_SECONDS} 秒）。请到工作台 Bible 查看地点是否已写入，或稍后重试。`
+          message.warning('地图生成超时')
+        },
+        onFatal: (msg) => {
+          generatingLocations.value = false
+          locationsError.value = msg
+          message.error(msg)
+        },
+      },
+    )
+  } catch (error: unknown) {
+    console.error('Retry locations failed:', error)
+    generatingLocations.value = false
+    locationsError.value = isLikelyTimeoutError(error)
+      ? '刷新请求超时，请检查网络后再试。'
+      : formatApiError(error) || '刷新检查失败'
+  } finally {
+    retryingLocations.value = false
   }
 }
 
